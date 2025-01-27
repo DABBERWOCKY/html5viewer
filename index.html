@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML5 Ad Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        #drop-zone {
+            border: 2px dashed #007bff;
+            padding: 20px;
+            margin-bottom: 20px;
+            cursor: pointer;
+            color: #555;
+        }
+        #ads-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        iframe {
+            border: 1px solid #ccc;
+            width: 300px;
+            height: 250px;
+        }
+    </style>
+</head>
+<body>
+    <h1>HTML5 Ad Viewer</h1>
+    <div id="drop-zone">Drop your ZIP file here</div>
+    <div id="ads-container"></div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const adsContainer = document.getElementById('ads-container');
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#28a745';
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = '#007bff';
+        });
+
+        dropZone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#007bff';
+            const file = e.dataTransfer.files[0];
+
+            if (file && file.name.endsWith('.zip')) {
+                const JSZip = await import('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+                const zip = new JSZip();
+                const content = await zip.loadAsync(file);
+                adsContainer.innerHTML = '';
+
+                for (const filename of Object.keys(content.files)) {
+                    if (filename.endsWith('.html')) {
+                        const htmlContent = await zip.file(filename).async('text');
+                        const blob = new Blob([htmlContent], { type: 'text/html' });
+                        const url = URL.createObjectURL(blob);
+
+                        const iframe = document.createElement('iframe');
+                        iframe.src = url;
+                        adsContainer.appendChild(iframe);
+                    }
+                }
+            } else {
+                alert('Please upload a valid ZIP file containing HTML files.');
+            }
+        });
+    </script>
+</body>
+</html>
