@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HTML5 Ad Viewer</title>
+    <title>Multi HTML5 Ad Viewer (CM360 Ready)</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -30,7 +30,7 @@
     </style>
 </head>
 <body>
-    <h1>HTML5 Ad Viewer</h1>
+    <h1>Multi HTML5 Ad Viewer (CM360 Ready)</h1>
     <div id="drop-zone">Drop your ZIP files here (multiple supported)</div>
     <div id="ads-container"></div>
 
@@ -38,6 +38,33 @@
     <script>
         const dropZone = document.getElementById('drop-zone');
         const adsContainer = document.getElementById('ads-container');
+
+        async function handleZip(zip, fileName) {
+            const fileMap = {};
+
+            // Extract all files and create Blob URLs
+            for (const [filename, fileData] of Object.entries(zip.files)) {
+                if (!fileData.dir) {
+                    const blob = await fileData.async('blob');
+                    const url = URL.createObjectURL(blob);
+                    fileMap[filename] = url;
+                }
+            }
+
+            // Locate the index.html file
+            const indexFile = Object.keys(fileMap).find(name => name.endsWith('index.html'));
+            if (indexFile) {
+                const iframe = document.createElement('iframe');
+                iframe.src = fileMap[indexFile]; // Point directly to the Blob URL
+                iframe.onload = () => {
+                    iframe.style.width = iframe.contentWindow.document.body.scrollWidth + 'px';
+                    iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 'px';
+                };
+                adsContainer.appendChild(iframe);
+            } else {
+                alert(`No index.html found in ZIP "${fileName}".`);
+            }
+        }
 
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -51,38 +78,15 @@
         dropZone.addEventListener('drop', async (e) => {
             e.preventDefault();
             dropZone.style.borderColor = '#007bff';
-            const files = Array.from(e.dataTransfer.files);
 
+            const files = Array.from(e.dataTransfer.files);
             adsContainer.innerHTML = ''; // Clear previous ads
 
             for (const file of files) {
                 if (file.name.endsWith('.zip')) {
                     const zip = new JSZip();
-                    const content = await zip.loadAsync(file);
-
-                    // Extract all files
-                    const fileMap = {};
-                    for (const [filename, fileData] of Object.entries(content.files)) {
-                        if (!fileData.dir) {
-                            const blob = await fileData.async('blob');
-                            const url = URL.createObjectURL(blob);
-                            fileMap[filename] = url;
-                        }
-                    }
-
-                    // Find index.html
-                    const indexFile = Object.keys(fileMap).find(name => name.endsWith('index.html'));
-                    if (indexFile) {
-                        const iframe = document.createElement('iframe');
-                        iframe.src = fileMap[indexFile]; // Serve index.html directly
-                        iframe.onload = () => {
-                            iframe.style.width = iframe.contentWindow.document.body.scrollWidth + 'px';
-                            iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 'px';
-                        };
-                        adsContainer.appendChild(iframe);
-                    } else {
-                        alert(`No index.html found in ZIP "${file.name}".`);
-                    }
+                    await zip.loadAsync(file);
+                    await handleZip(zip, file.name);
                 } else {
                     alert(`"${file.name}" is not a ZIP file. Skipping.`);
                 }
