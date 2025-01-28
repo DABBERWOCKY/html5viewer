@@ -1,0 +1,24 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+
+h1 {
+    font-size: 24px;
+}
+
+#previewContainer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.ad-preview {
+    border: 1px solid #ccc;
+    padding: 10px;
+    margin: 10px;
+    width: 320px;
+    height: 300px;
+    overflow: hidden;
+    text-align: center;
+}
