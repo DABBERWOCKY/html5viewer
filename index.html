@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi HTML5 Ad Viewer</title>
+    <title>HTML5 Ad Viewer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -30,7 +30,7 @@
     </style>
 </head>
 <body>
-    <h1>Multi HTML5 Ad Viewer</h1>
+    <h1>HTML5 Ad Viewer</h1>
     <div id="drop-zone">Drop your ZIP files here (multiple supported)</div>
     <div id="ads-container"></div>
 
@@ -51,8 +51,8 @@
         dropZone.addEventListener('drop', async (e) => {
             e.preventDefault();
             dropZone.style.borderColor = '#007bff';
-
             const files = Array.from(e.dataTransfer.files);
+
             adsContainer.innerHTML = ''; // Clear previous ads
 
             for (const file of files) {
@@ -60,62 +60,34 @@
                     const zip = new JSZip();
                     const content = await zip.loadAsync(file);
 
-                    // Find the index.html file
-                    const indexFile = Object.keys(content.files).find(name => name.endsWith('index.html'));
-                    if (!indexFile) {
-                        alert(`No index.html found in ZIP "${file.name}". Skipping.`);
-                        continue;
+                    // Extract all files
+                    const fileMap = {};
+                    for (const [filename, fileData] of Object.entries(content.files)) {
+                        if (!fileData.dir) {
+                            const blob = await fileData.async('blob');
+                            const url = URL.createObjectURL(blob);
+                            fileMap[filename] = url;
+                        }
                     }
 
-                    // Embed all assets into the HTML
-                    let htmlContent = await content.files[indexFile].async('text');
-                    const basePath = indexFile.substring(0, indexFile.lastIndexOf('/') + 1);
-
-                    // Replace all src and href paths with base64-encoded data
-                    htmlContent = await replaceAssetPaths(htmlContent, content, basePath);
-
-                    // Display the ad in an iframe
-                    const iframe = document.createElement('iframe');
-                    iframe.srcdoc = htmlContent;
-                    iframe.onload = () => {
-                        iframe.style.width = iframe.contentWindow.document.body.scrollWidth + 'px';
-                        iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 'px';
-                    };
-                    adsContainer.appendChild(iframe);
+                    // Find index.html
+                    const indexFile = Object.keys(fileMap).find(name => name.endsWith('index.html'));
+                    if (indexFile) {
+                        const iframe = document.createElement('iframe');
+                        iframe.src = fileMap[indexFile]; // Serve index.html directly
+                        iframe.onload = () => {
+                            iframe.style.width = iframe.contentWindow.document.body.scrollWidth + 'px';
+                            iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 'px';
+                        };
+                        adsContainer.appendChild(iframe);
+                    } else {
+                        alert(`No index.html found in ZIP "${file.name}".`);
+                    }
                 } else {
                     alert(`"${file.name}" is not a ZIP file. Skipping.`);
                 }
             }
         });
-
-        async function replaceAssetPaths(htmlContent, zip, basePath) {
-            return htmlContent.replace(/(src|href)=["']([^"']+)["']/g, async (match, attr, path) => {
-                const fullPath = basePath + path;
-                const file = zip.files[fullPath];
-                if (file) {
-                    const mimeType = getMimeType(fullPath);
-                    const base64 = await file.async('base64');
-                    return `${attr}="data:${mimeType};base64,${base64}"`;
-                }
-                return match; // If asset not found, leave the original path
-            });
-        }
-
-        function getMimeType(filePath) {
-            const ext = filePath.split('.').pop().toLowerCase();
-            const mimeTypes = {
-                jpg: 'image/jpeg',
-                jpeg: 'image/jpeg',
-                png: 'image/png',
-                gif: 'image/gif',
-                css: 'text/css',
-                js: 'application/javascript',
-                ttf: 'font/ttf',
-                woff: 'font/woff',
-                woff2: 'font/woff2',
-            };
-            return mimeTypes[ext] || 'application/octet-stream';
-        }
     </script>
 </body>
 </html>
