@@ -13,9 +13,15 @@
     #drop-zone {
       border: 2px dashed #007bff;
       padding: 20px;
-      margin-bottom: 20px;
+      margin-bottom: 10px;
       cursor: pointer;
       color: #555;
+    }
+    #share-button {
+      margin-bottom: 20px;
+      padding: 8px 16px;
+      font-size: 1em;
+      cursor: pointer;
     }
     #ads-container {
       display: flex;
@@ -23,113 +29,102 @@
       gap: 20px;
       justify-content: center;
     }
-   iframe {
-  border: none;
-  display: block;
-}
+    iframe {
+      border: none; /* Remove any borders */
+      display: block;
+    }
+    /* Hide the file input element */
+    #file-input {
+      display: none;
+    }
   </style>
 </head>
 <body>
   <h1>HTML5 Ad Viewer</h1>
-  <div id="drop-zone">Drop your ZIP files here (multiple supported)</div>
+  <div id="drop-zone">Drop your ZIP files here (or click to browse)</div>
+  <button id="share-button">Share</button>
   <div id="ads-container"></div>
+  <!-- Hidden file input for file browsing -->
+  <input id="file-input" type="file" accept=".zip" multiple />
 
   <!-- Include JSZip from CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
-    const dropZone = document.getElementById('drop-zone');
-    const adsContainer = document.getElementById('ads-container');
+    /**********************************
+     * Global Variables and Helpers
+     **********************************/
+    // Array to store loaded ZIP File objects for sharing
+    let loadedZipFiles = [];
 
-    // Normalize a path by converting backslashes to forward slashes.
+    // Convert backslashes to forward slashes
     function normalizePath(path) {
       return path.replace(/\\/g, '/');
     }
 
     // Combine a base path and a relative path.
-    // E.g., combinePath("ad/", "images/photo.jpg") returns "ad/images/photo.jpg".
+    // For example, combinePath("ad/", "images/photo.jpg") returns "ad/images/photo.jpg".
     function combinePath(basePath, relativePath) {
-      // Remove any leading slashes from the relative path.
       relativePath = relativePath.replace(/^\/+/, '');
       return normalizePath(basePath + relativePath);
     }
 
     /**
-     * Attempts to resolve a resource path to a blob URL using fileMap.
-     * @param {string} basePath - The base folder for the HTML/CSS file.
-     * @param {string} resourcePath - The resource path from the HTML/CSS.
-     * @param {Object} fileMap - The mapping of file paths to blob URLs.
-     * @returns {string|null} The blob URL if found, or null if not.
+     * Resolve a resource URL from a base path and a file map.
+     * @param {string} basePath - The folder of the parent file.
+     * @param {string} resourcePath - The resource path to resolve.
+     * @param {Object} fileMap - Mapping of file paths to blob URLs.
+     * @returns {string|null} A blob URL if found, or null.
      */
     function resolveResource(basePath, resourcePath, fileMap) {
       let candidate = null;
-      
-      // Debug logging.
-      // console.log('Resolving resource:', resourcePath, 'with basePath:', basePath);
-
-      // If resourcePath is absolute (starts with a slash), assume it’s relative to the ZIP’s root.
       if (resourcePath.startsWith('/')) {
         candidate = normalizePath(resourcePath.substring(1));
-        // Debug: show candidate.
-        // console.log('Trying candidate (absolute):', candidate);
-        if (fileMap[candidate]) {
-          return fileMap[candidate];
-        }
-        // As a fallback, try combining with basePath.
+        if (fileMap[candidate]) return fileMap[candidate];
         candidate = combinePath(basePath, resourcePath);
-        // console.log('Trying candidate (fallback combine):', candidate);
-        if (fileMap[candidate]) {
-          return fileMap[candidate];
-        }
+        if (fileMap[candidate]) return fileMap[candidate];
       } else {
-        // First try resolving relative to the current basePath.
         candidate = combinePath(basePath, resourcePath);
-        // console.log('Trying candidate (relative):', candidate);
-        if (fileMap[candidate]) {
-          return fileMap[candidate];
-        }
-        // Then try the resource path on its own (as if it were at the ZIP root).
+        if (fileMap[candidate]) return fileMap[candidate];
         candidate = normalizePath(resourcePath);
-        // console.log('Trying candidate (root fallback):', candidate);
-        if (fileMap[candidate]) {
-          return fileMap[candidate];
-        }
+        if (fileMap[candidate]) return fileMap[candidate];
       }
-      // If not found, log it and return null.
-      console.warn("Resource not found for:", resourcePath, "Candidates tried:", candidate);
+      console.warn("Resource not found for:", resourcePath, "Candidate tried:", candidate);
       return null;
     }
 
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = '#28a745';
-    });
+    // Convert a data URL (base64) to a Blob.
+    function dataURLToBlob(dataUrl) {
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    }
 
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.style.borderColor = '#007bff';
-    });
-
-    dropZone.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = '#007bff';
-      const files = Array.from(e.dataTransfer.files);
-      adsContainer.innerHTML = ''; // Clear previous ads
-
+    /**********************************
+     * ZIP Processing Functionality
+     **********************************/
+    async function processZipFiles(files) {
       for (const file of files) {
+        // file may be a File (from drag/drop or file input) or a Blob with a "name" property
         if (!file.name.endsWith('.zip')) {
           alert(`"${file.name}" is not a ZIP file. Skipping.`);
           continue;
         }
         try {
           const zip = new JSZip();
-          const zipContent = await zip.loadAsync(file);
+          // For shared files, our file is already a Blob; for dropped/browsed files, it's a File (a Blob)
+          const zipContent = await zip.loadAsync(file.blob ? file.blob : file);
 
           // Build a mapping of normalized file paths to blob URLs.
           const fileMap = {};
-
           const nonCssPromises = [];
           const cssFiles = [];
 
-          // Process every file in the ZIP.
           for (const [filename, fileData] of Object.entries(zipContent.files)) {
             if (!fileData.dir) {
               const normName = normalizePath(filename);
@@ -165,14 +160,14 @@
           });
           await Promise.all(cssPromises);
 
-          // Find index.html (case-insensitive).
+          // Locate the index.html file (case-insensitive).
           const indexFile = Object.keys(fileMap).find(name => name.toLowerCase().endsWith('index.html'));
           if (!indexFile) {
             alert(`No index.html found in ZIP "${file.name}".`);
             continue;
           }
 
-          // Load index.html as text for rewriting resource URLs.
+          // Read index.html as text for rewriting resource URLs.
           let indexContent = await zipContent.file(indexFile).async("text");
           const lastSlashIndex = indexFile.lastIndexOf('/');
           const htmlBasePath = lastSlashIndex !== -1 ? indexFile.substring(0, lastSlashIndex + 1) : '';
@@ -186,7 +181,7 @@
             return blobURL ? `${attr}="${blobURL}"` : match;
           });
 
-          // Also update any inline CSS url() references.
+          // Replace inline CSS url() references.
           indexContent = indexContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
             if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
               return match;
@@ -203,8 +198,6 @@
           const iframe = document.createElement('iframe');
           iframe.src = modifiedUrl;
           iframe.title = file.name;
-
-          // Adjust the iframe dimensions after loading.
           iframe.onload = () => {
             setTimeout(() => {
               try {
@@ -216,13 +209,110 @@
               }
             }, 100);
           };
-
-          adsContainer.appendChild(iframe);
+          document.getElementById('ads-container').appendChild(iframe);
         } catch (err) {
           console.error(`Error processing "${file.name}":`, err);
           alert(`Error processing "${file.name}". See console for details.`);
         }
       }
+    }
+
+    /**********************************
+     * Share Button Functionality
+     **********************************/
+    document.getElementById('share-button').addEventListener('click', async function () {
+      if (loadedZipFiles.length === 0) {
+        alert("No ZIP files loaded to share!");
+        return;
+      }
+      const sharedFiles = [];
+      for (const file of loadedZipFiles) {
+        sharedFiles.push(new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            resolve({
+              name: file.name,
+              data: e.target.result
+            });
+          };
+          reader.onerror = function (e) {
+            reject(e);
+          };
+          reader.readAsDataURL(file);
+        }));
+      }
+      const sharedFilesData = await Promise.all(sharedFiles);
+      const shareObj = { files: sharedFilesData };
+      const shareStr = JSON.stringify(shareObj);
+      const encodedShare = encodeURIComponent(shareStr);
+      window.location.hash = "share=" + encodedShare;
+      prompt("Copy this shareable link:", window.location.href);
+    });
+
+    /**********************************
+     * Drag & Drop and File Browsing Handling
+     **********************************/
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    // When clicking the drop zone, open the file browser.
+    dropZone.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    // Drag & drop events.
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '#28a745';
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.style.borderColor = '#007bff';
+    });
+    dropZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '#007bff';
+      const files = Array.from(e.dataTransfer.files);
+      const zipFiles = files.filter(file => file.name.endsWith('.zip'));
+      loadedZipFiles.push(...zipFiles);
+      await processZipFiles(zipFiles);
+    });
+
+    // File browser selection event.
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      const zipFiles = files.filter(file => file.name.endsWith('.zip'));
+      loadedZipFiles.push(...zipFiles);
+      await processZipFiles(zipFiles);
+      // Clear the file input for future selections.
+      fileInput.value = "";
+    });
+
+    /**********************************
+     * Load Shared Files from URL (if any)
+     **********************************/
+    async function loadSharedFilesFromURL() {
+      const hash = window.location.hash;
+      if (hash.startsWith("#share=")) {
+        try {
+          const encoded = hash.substring("#share=".length);
+          const shareStr = decodeURIComponent(encoded);
+          const shareObj = JSON.parse(shareStr);
+          const sharedFilesData = shareObj.files; // Array of {name, data}
+          const sharedFiles = sharedFilesData.map(fileData => {
+            const blob = dataURLToBlob(fileData.data);
+            blob.name = fileData.name;
+            return blob;
+          });
+          loadedZipFiles.push(...sharedFiles);
+          await processZipFiles(sharedFiles);
+        } catch (err) {
+          console.error("Error loading shared files from URL:", err);
+        }
+      }
+    }
+
+    window.addEventListener('load', () => {
+      loadSharedFilesFromURL();
     });
   </script>
 </body>
