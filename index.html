@@ -17,6 +17,12 @@
       cursor: pointer;
       color: #555;
     }
+    #share-button {
+      margin-bottom: 20px;
+      padding: 8px 16px;
+      font-size: 1em;
+      cursor: pointer;
+    }
     #ads-container {
       display: flex;
       flex-wrap: wrap;
@@ -24,7 +30,7 @@
       justify-content: center;
     }
     iframe {
-      border: none; /* Remove any borders */
+      border: none;
       display: block;
     }
     /* Hide the file input element */
@@ -35,10 +41,11 @@
 </head>
 <body>
   <h1>HTML5 Ad Viewer</h1>
-  <div id="drop-zone">Drop your ZIP files here (or click to browse)</div>
+  <div id="drop-zone">Drop your ZIP, GIF, or Video files here (or click to browse)</div>
+  <button id="share-button">Share</button>
   <div id="ads-container"></div>
-  <!-- Hidden file input for file browsing -->
-  <input id="file-input" type="file" accept=".zip" multiple />
+  <!-- Updated file input accept attribute -->
+  <input id="file-input" type="file" accept=".zip,.gif,.mp4,.webm" multiple />
 
   <!-- Include JSZip from CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -54,29 +61,21 @@
     }, false);
 
     /**********************************
-     * Global Variables and Helper Functions
+     * Global Variables and Helpers
      **********************************/
-    // Array to store loaded ZIP File objects (for further processing if needed)
-    let loadedZipFiles = [];
+    let loadedFiles = [];
 
-    // Normalize paths (convert backslashes to forward slashes)
     function normalizePath(path) {
       return path.replace(/\\/g, '/');
     }
 
-    // Combine a base path and a relative path.
-    // For example, combinePath("ad/", "images/photo.jpg") returns "ad/images/photo.jpg".
     function combinePath(basePath, relativePath) {
       relativePath = relativePath.replace(/^\/+/, '');
       return normalizePath(basePath + relativePath);
     }
 
     /**
-     * Resolve a resource URL from a base path and a file map.
-     * @param {string} basePath - The folder of the parent file.
-     * @param {string} resourcePath - The resource path.
-     * @param {Object} fileMap - Mapping of file paths to blob URLs.
-     * @returns {string|null} A blob URL if found, or null.
+     * Resolve a resource URL from a base path and a fileMap.
      */
     function resolveResource(basePath, resourcePath, fileMap) {
       let candidate = null;
@@ -95,116 +94,205 @@
       return null;
     }
 
+    function dataURLToBlob(dataUrl) {
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    }
+
     /**********************************
-     * ZIP Processing Functionality
+     * Process ZIP Files
      **********************************/
-    async function processZipFiles(files) {
-      for (const file of files) {
-        if (!file.name.endsWith('.zip')) {
-          alert(`"${file.name}" is not a ZIP file. Skipping.`);
-          continue;
+    async function processZipFile(file) {
+      try {
+        const zip = new JSZip();
+        const zipContent = await zip.loadAsync(file.blob ? file.blob : file);
+        const fileMap = {};
+        const nonCssPromises = [];
+        const cssFiles = [];
+
+        for (const [filename, fileData] of Object.entries(zipContent.files)) {
+          if (!fileData.dir) {
+            const normName = normalizePath(filename);
+            if (normName.toLowerCase().endsWith('.css')) {
+              cssFiles.push({ filename: normName, fileData });
+            } else {
+              nonCssPromises.push(
+                fileData.async("blob").then(blob => {
+                  fileMap[normName] = URL.createObjectURL(blob);
+                })
+              );
+            }
+          }
         }
-        try {
-          const zip = new JSZip();
-          // For dropped or browsed files, file is already a Blob
-          const zipContent = await zip.loadAsync(file);
+        await Promise.all(nonCssPromises);
 
-          // Build a mapping of normalized file paths to blob URLs.
-          const fileMap = {};
-          const nonCssPromises = [];
-          const cssFiles = [];
-
-          for (const [filename, fileData] of Object.entries(zipContent.files)) {
-            if (!fileData.dir) {
-              const normName = normalizePath(filename);
-              if (normName.toLowerCase().endsWith('.css')) {
-                cssFiles.push({ filename: normName, fileData });
-              } else {
-                nonCssPromises.push(
-                  fileData.async("blob").then(blob => {
-                    fileMap[normName] = URL.createObjectURL(blob);
-                  })
-                );
+        // Process CSS files: update any url(...) references with blob URLs.
+        const cssPromises = cssFiles.map(item => {
+          const { filename, fileData } = item;
+          return fileData.async("text").then(cssContent => {
+            const lastSlashIndex = filename.lastIndexOf('/');
+            const cssBasePath = lastSlashIndex !== -1 ? filename.substring(0, lastSlashIndex + 1) : '';
+            cssContent = cssContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
+              if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
+                return match;
               }
-            }
-          }
-          await Promise.all(nonCssPromises);
-
-          // Process CSS files: replace any url(...) references with blob URLs.
-          const cssPromises = cssFiles.map(item => {
-            const { filename, fileData } = item;
-            return fileData.async("text").then(cssContent => {
-              const lastSlashIndex = filename.lastIndexOf('/');
-              const cssBasePath = lastSlashIndex !== -1 ? filename.substring(0, lastSlashIndex + 1) : '';
-              cssContent = cssContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
-                if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
-                  return match;
-                }
-                const blobURL = resolveResource(cssBasePath, resourcePath, fileMap);
-                return blobURL ? `url("${blobURL}")` : match;
-              });
-              const blob = new Blob([cssContent], { type: "text/css" });
-              fileMap[filename] = URL.createObjectURL(blob);
+              const blobURL = resolveResource(cssBasePath, resourcePath, fileMap);
+              return blobURL ? `url("${blobURL}")` : match;
             });
+            const blob = new Blob([cssContent], { type: "text/css" });
+            fileMap[filename] = URL.createObjectURL(blob);
           });
-          await Promise.all(cssPromises);
+        });
+        await Promise.all(cssPromises);
 
-          // Locate the index.html file (case-insensitive).
-          const indexFile = Object.keys(fileMap).find(name => name.toLowerCase().endsWith('index.html'));
-          if (!indexFile) {
-            alert(`No index.html found in ZIP "${file.name}".`);
-            continue;
+        // Look for an index.html file (case-insensitive)
+        let indexFile = Object.keys(fileMap).find(name => name.toLowerCase().endsWith('index.html'));
+
+        // If no index.html, try to find a media file (GIF or Video) inside the ZIP.
+        if (!indexFile) {
+          const mediaFile = Object.keys(fileMap).find(name => {
+            return name.toLowerCase().endsWith('.gif') ||
+                   name.toLowerCase().endsWith('.mp4') ||
+                   name.toLowerCase().endsWith('.webm');
+          });
+          if (mediaFile) {
+            displayMediaElement(fileMap[mediaFile], mediaFile, file.name);
+            return;
+          } else {
+            alert(`No index.html or media file (GIF/Video) found in ZIP "${file.name}".`);
+            return;
           }
+        }
 
-          // Read index.html as text so we can rewrite its resource URLs.
-          let indexContent = await zipContent.file(indexFile).async("text");
-          const lastSlashIndex = indexFile.lastIndexOf('/');
-          const htmlBasePath = lastSlashIndex !== -1 ? indexFile.substring(0, lastSlashIndex + 1) : '';
+        // Process index.html: update resource URLs.
+        let indexContent = await zipContent.file(indexFile).async("text");
+        const lastSlashIndex = indexFile.lastIndexOf('/');
+        const htmlBasePath = lastSlashIndex !== -1 ? indexFile.substring(0, lastSlashIndex + 1) : '';
 
-          // Replace src and href attributes with the proper blob URLs.
-          indexContent = indexContent.replace(/(src|href)=["']([^"']+)["']/gi, (match, attr, resourcePath) => {
-            if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
-              return match;
+        indexContent = indexContent.replace(/(src|href)=["']([^"']+)["']/gi, (match, attr, resourcePath) => {
+          if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
+            return match;
+          }
+          const blobURL = resolveResource(htmlBasePath, resourcePath, fileMap);
+          return blobURL ? `${attr}="${blobURL}"` : match;
+        });
+
+        indexContent = indexContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
+          if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
+            return match;
+          }
+          const blobURL = resolveResource(htmlBasePath, resourcePath, fileMap);
+          return blobURL ? `url("${blobURL}")` : match;
+        });
+
+        const modifiedBlob = new Blob([indexContent], { type: "text/html" });
+        const modifiedUrl = URL.createObjectURL(modifiedBlob);
+        const iframe = document.createElement('iframe');
+        iframe.src = modifiedUrl;
+        iframe.title = file.name;
+        iframe.onload = () => {
+          setTimeout(() => {
+            try {
+              const doc = iframe.contentDocument.documentElement;
+              iframe.style.width = doc.scrollWidth + 'px';
+              iframe.style.height = doc.scrollHeight + 'px';
+            } catch (err) {
+              console.error("Error accessing iframe content:", err);
             }
-            const blobURL = resolveResource(htmlBasePath, resourcePath, fileMap);
-            return blobURL ? `${attr}="${blobURL}"` : match;
-          });
+          }, 100);
+        };
+        document.getElementById('ads-container').appendChild(iframe);
+      } catch (err) {
+        console.error(`Error processing "${file.name}":`, err);
+        alert(`Error processing "${file.name}". See console for details.`);
+      }
+    }
 
-          // Also replace any inline CSS url() references.
-          indexContent = indexContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
-            if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
-              return match;
-            }
-            const blobURL = resolveResource(htmlBasePath, resourcePath, fileMap);
-            return blobURL ? `url("${blobURL}")` : match;
-          });
+    /**********************************
+     * Display Media Directly
+     **********************************/
+    function displayMediaElement(blobURL, filename, fileDisplayName) {
+      let mediaElement;
+      const lower = filename.toLowerCase();
+      if (lower.endsWith('.gif')) {
+        mediaElement = document.createElement('img');
+        mediaElement.src = blobURL;
+        mediaElement.alt = fileDisplayName;
+      } else {
+        mediaElement = document.createElement('video');
+        mediaElement.src = blobURL;
+        mediaElement.autoplay = true;
+        mediaElement.loop = true;
+        mediaElement.muted = true;
+        mediaElement.playsInline = true;
+        mediaElement.style.maxWidth = '100%';
+      }
+      const mediaContainer = document.createElement('div');
+      mediaContainer.appendChild(mediaElement);
+      document.getElementById('ads-container').appendChild(mediaContainer);
+    }
 
-          // Create a blob URL for the modified index.html.
-          const modifiedBlob = new Blob([indexContent], { type: "text/html" });
-          const modifiedUrl = URL.createObjectURL(modifiedBlob);
-
-          // Create an iframe to display the ad.
-          const iframe = document.createElement('iframe');
-          iframe.src = modifiedUrl;
-          iframe.title = file.name;
-          iframe.onload = () => {
-            setTimeout(() => {
-              try {
-                const doc = iframe.contentDocument.documentElement;
-                iframe.style.width = doc.scrollWidth + 'px';
-                iframe.style.height = doc.scrollHeight + 'px';
-              } catch (err) {
-                console.error("Error accessing iframe content:", err);
-              }
-            }, 100);
-          };
-          document.getElementById('ads-container').appendChild(iframe);
-        } catch (err) {
-          console.error(`Error processing "${file.name}":`, err);
-          alert(`Error processing "${file.name}". See console for details.`);
+    /**********************************
+     * Process Files (ZIP, GIF, or Video)
+     **********************************/
+    async function processFiles(files) {
+      for (const file of files) {
+        const name = file.name.toLowerCase();
+        // If it's a ZIP file, process it accordingly.
+        if (name.endsWith('.zip')) {
+          loadedFiles.push(file);
+          await processZipFile(file);
+        }
+        // If it's a direct media file.
+        else if (name.endsWith('.gif') || name.endsWith('.mp4') || name.endsWith('.webm')) {
+          // Create a blob URL and display the media element.
+          const blobURL = URL.createObjectURL(file);
+          displayMediaElement(blobURL, file.name, file.name);
+          loadedFiles.push(file);
+        } else {
+          alert(`Unsupported file type: "${file.name}"`);
         }
       }
     }
+
+    /**********************************
+     * Share Button Functionality
+     **********************************/
+    document.getElementById('share-button').addEventListener('click', async function () {
+      if (loadedFiles.length === 0) {
+        alert("No files loaded to share!");
+        return;
+      }
+      const sharedFiles = [];
+      for (const file of loadedFiles) {
+        sharedFiles.push(new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            resolve({
+              name: file.name,
+              data: e.target.result
+            });
+          };
+          reader.onerror = function (e) {
+            reject(e);
+          };
+          reader.readAsDataURL(file);
+        }));
+      }
+      const sharedFilesData = await Promise.all(sharedFiles);
+      const shareObj = { files: sharedFilesData };
+      const shareStr = JSON.stringify(shareObj);
+      const encodedShare = encodeURIComponent(shareStr);
+      window.location.hash = "share=" + encodedShare;
+      prompt("Copy this shareable link:", window.location.href);
+    });
 
     /**********************************
      * Drag & Drop and File Browser Handling
@@ -212,12 +300,10 @@
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
 
-    // Open the file browser when clicking the drop zone.
     dropZone.addEventListener('click', () => {
       fileInput.click();
     });
 
-    // Handle drag & drop events on the drop zone.
     dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
       dropZone.style.borderColor = '#28a745';
@@ -229,18 +315,41 @@
       e.preventDefault();
       dropZone.style.borderColor = '#007bff';
       const files = Array.from(e.dataTransfer.files);
-      const zipFiles = files.filter(file => file.name.endsWith('.zip'));
-      loadedZipFiles.push(...zipFiles);
-      await processZipFiles(zipFiles);
+      await processFiles(files);
     });
 
-    // Handle file selection from the file browser.
     fileInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files);
-      const zipFiles = files.filter(file => file.name.endsWith('.zip'));
-      loadedZipFiles.push(...zipFiles);
-      await processZipFiles(zipFiles);
-      fileInput.value = ""; // Clear the selection for future uploads.
+      await processFiles(files);
+      fileInput.value = "";
+    });
+
+    /**********************************
+     * Load Shared Files from URL (if any)
+     **********************************/
+    async function loadSharedFilesFromURL() {
+      const hash = window.location.hash;
+      if (hash.startsWith("#share=")) {
+        try {
+          const encoded = hash.substring("#share=".length);
+          const shareStr = decodeURIComponent(encoded);
+          const shareObj = JSON.parse(shareStr);
+          const sharedFilesData = shareObj.files;
+          const sharedFiles = sharedFilesData.map(fileData => {
+            const blob = dataURLToBlob(fileData.data);
+            blob.name = fileData.name;
+            return blob;
+          });
+          loadedFiles.push(...sharedFiles);
+          await processFiles(sharedFiles);
+        } catch (err) {
+          console.error("Error loading shared files from URL:", err);
+        }
+      }
+    }
+
+    window.addEventListener('load', () => {
+      loadSharedFilesFromURL();
     });
   </script>
 </body>
