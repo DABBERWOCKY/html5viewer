@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>HTML5 Ad & Media Viewer</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 20px;
-      text-align: center;
+      /* text-align: center;  <-- optional; remove if it conflicts with flex layout */
     }
     #drop-zone {
       border: 2px dashed #007bff;
@@ -16,16 +16,23 @@
       margin-bottom: 10px;
       cursor: pointer;
       color: #555;
+      text-align: center; /* Keep drop-zone text centered */
     }
     #ads-container {
       display: flex;
       flex-wrap: wrap;
       gap: 20px;
-      justify-content: center;
+      justify-content: center;  /* center items horizontally */
+      align-items: flex-start;  /* do not stretch items vertically */
+      margin-top: 20px;
     }
+    /* Ensure no forced scaling on images, videos, or iframes */
     iframe, img, video {
-      border: none; /* Remove any borders */
       display: block;
+      border: none;
+      margin: 0;          /* Let the flex container handle spacing via gap */
+      max-width: none;    /* Don't auto-scale down to container */
+      height: auto;       /* Keep aspect ratio for images/videos */
     }
     /* Hide the file input element */
     #file-input {
@@ -34,9 +41,10 @@
   </style>
 </head>
 <body>
-  <h1>HTML5 Ad & Media Viewer</h1>
+  <h1 style="text-align:center;">HTML5 Ad & Media Viewer</h1>
   <div id="drop-zone">Drop your ZIP, GIF, or video files here (or click to browse)</div>
   <div id="ads-container"></div>
+
   <!-- Hidden file input for file browsing -->
   <input id="file-input" type="file" accept=".zip, .gif, .mp4, .webm" multiple />
 
@@ -56,7 +64,6 @@
     /**********************************
      * Global Variables and Helper Functions
      **********************************/
-    // Array to store loaded files (ZIP or media) if needed
     let loadedFiles = [];
 
     // Normalize paths (convert backslashes to forward slashes)
@@ -88,6 +95,36 @@
       }
       console.warn("Resource not found for:", resourcePath, "Candidate tried:", candidate);
       return null;
+    }
+
+    // Dynamically resize the iframe to fit its content.
+    function autoResizeIframe(iframe) {
+      setTimeout(() => {
+        try {
+          const doc = iframe.contentDocument;
+          const docEl = doc.documentElement;
+          const body = doc.body;
+
+          // Use a combination of scroll and offset to find the best fit
+          const width = Math.max(
+            docEl.scrollWidth,
+            docEl.offsetWidth,
+            body ? body.scrollWidth : 0,
+            body ? body.offsetWidth : 0
+          );
+          const height = Math.max(
+            docEl.scrollHeight,
+            docEl.offsetHeight,
+            body ? body.scrollHeight : 0,
+            body ? body.offsetHeight : 0
+          );
+
+          iframe.style.width = width + 'px';
+          iframe.style.height = height + 'px';
+        } catch (err) {
+          console.error("Error accessing iframe content:", err);
+        }
+      }, 100);
     }
 
     /**********************************
@@ -181,17 +218,7 @@
           const iframe = document.createElement('iframe');
           iframe.src = modifiedUrl;
           iframe.title = file.name;
-          iframe.onload = () => {
-            setTimeout(() => {
-              try {
-                const doc = iframe.contentDocument.documentElement;
-                iframe.style.width = doc.scrollWidth + 'px';
-                iframe.style.height = doc.scrollHeight + 'px';
-              } catch (err) {
-                console.error("Error accessing iframe content:", err);
-              }
-            }, 100);
-          };
+          iframe.onload = () => autoResizeIframe(iframe);
           document.getElementById('ads-container').appendChild(iframe);
         } catch (err) {
           console.error(`Error processing "${file.name}":`, err);
@@ -206,8 +233,9 @@
     function processMediaFiles(files) {
       files.forEach(file => {
         const url = URL.createObjectURL(file);
-        let element;
         const lowerName = file.name.toLowerCase();
+        let element;
+
         if (lowerName.endsWith('.gif')) {
           element = document.createElement('img');
           element.src = url;
@@ -216,13 +244,12 @@
           element = document.createElement('video');
           element.src = url;
           element.controls = true;
-          element.style.maxWidth = '100%';
         } else {
           alert(`Unsupported file type: ${file.name}`);
           return;
         }
-        element.style.display = 'block';
-        element.style.margin = '10px auto';
+
+        // Let the new CSS handle sizing. Just append it.
         document.getElementById('ads-container').appendChild(element);
       });
     }
@@ -231,7 +258,6 @@
      * Unified File Processing Functionality
      **********************************/
     async function processFiles(files) {
-      // Store all loaded files if needed
       loadedFiles.push(...files);
       const zipFiles = files.filter(file => file.name.toLowerCase().endsWith('.zip'));
       const mediaFiles = files.filter(file => {
