@@ -2,13 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>HTML5 Ad & Media Viewer</title>
+  <title>Ad & Media Viewer (file.io)</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 20px;
-      /* text-align: center;  <-- optional; remove if it conflicts with flex layout */
     }
     #drop-zone {
       border: 2px dashed #007bff;
@@ -16,275 +14,89 @@
       margin-bottom: 10px;
       cursor: pointer;
       color: #555;
-      text-align: center; /* Keep drop-zone text centered */
+      text-align: center;
     }
     #ads-container {
       display: flex;
       flex-wrap: wrap;
       gap: 20px;
-      justify-content: center;  /* center items horizontally */
-      align-items: flex-start;  /* do not stretch items vertically */
+      justify-content: center;
+      align-items: flex-start;
       margin-top: 20px;
     }
-    /* Ensure no forced scaling on images, videos, or iframes */
     iframe, img, video {
       display: block;
       border: none;
-      margin: 0;          /* Let the flex container handle spacing via gap */
-      max-width: none;    /* Don't auto-scale down to container */
-      height: auto;       /* Keep aspect ratio for images/videos */
+      max-width: none;
+      height: auto;
     }
-    /* Hide the file input element */
     #file-input {
       display: none;
+    }
+    .btn {
+      display: inline-block;
+      padding: 8px 16px;
+      margin: 10px 5px 0 5px;
+      background: #007bff;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      border-radius: 4px;
+    }
+    .btn:disabled {
+      background: #aaa;
+      cursor: not-allowed;
+    }
+    #share-link {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px;
+      font-size: 0.9rem;
+      height: 60px;
+      resize: none;
     }
   </style>
 </head>
 <body>
-  <h1 style="text-align:center;">HTML5 Ad & Media Viewer</h1>
-  <div id="drop-zone">Drop your ZIP, GIF, or video files here (or click to browse)</div>
+  <h1 style="text-align:center;">Ad & Media Viewer (file.io)</h1>
+  <div id="drop-zone">Drop your files here (ZIP, images, videos) or click to browse</div>
+  <div style="text-align:center;">
+    <button id="upload-btn" class="btn">Upload to file.io</button>
+    <button id="share-btn" class="btn" disabled>Generate Share Link</button>
+    <br/>
+    <textarea id="share-link" readonly placeholder="Your shareable link will appear here..."></textarea>
+  </div>
   <div id="ads-container"></div>
 
-  <!-- Hidden file input for file browsing -->
-  <input id="file-input" type="file" accept=".zip, .gif, .mp4, .webm" multiple />
+  <!-- Hidden file input -->
+  <input
+    id="file-input"
+    type="file"
+    accept=".zip, .gif, .jpg, .jpeg, .png, .webp, .svg, .mp4, .webm"
+    multiple
+  />
 
-  <!-- Include JSZip from CDN -->
+  <!-- (Optional) JSZip if you want to parse ZIP banners -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
-    /**********************************
-     * Prevent Default Document Drop Behavior
-     **********************************/
-    document.addEventListener('dragover', e => {
-      e.preventDefault();
-    }, false);
-    document.addEventListener('drop', e => {
-      e.preventDefault();
-    }, false);
-
-    /**********************************
-     * Global Variables and Helper Functions
-     **********************************/
-    let loadedFiles = [];
-
-    // Normalize paths (convert backslashes to forward slashes)
-    function normalizePath(path) {
-      return path.replace(/\\/g, '/');
-    }
-
-    // Combine a base path and a relative path.
-    function combinePath(basePath, relativePath) {
-      relativePath = relativePath.replace(/^\/+/, '');
-      return normalizePath(basePath + relativePath);
-    }
-
-    /**
-     * Resolve a resource URL from a base path and a file map.
-     */
-    function resolveResource(basePath, resourcePath, fileMap) {
-      let candidate = null;
-      if (resourcePath.startsWith('/')) {
-        candidate = normalizePath(resourcePath.substring(1));
-        if (fileMap[candidate]) return fileMap[candidate];
-        candidate = combinePath(basePath, resourcePath);
-        if (fileMap[candidate]) return fileMap[candidate];
-      } else {
-        candidate = combinePath(basePath, resourcePath);
-        if (fileMap[candidate]) return fileMap[candidate];
-        candidate = normalizePath(resourcePath);
-        if (fileMap[candidate]) return fileMap[candidate];
-      }
-      console.warn("Resource not found for:", resourcePath, "Candidate tried:", candidate);
-      return null;
-    }
-
-    // Dynamically resize the iframe to fit its content.
-    function autoResizeIframe(iframe) {
-      setTimeout(() => {
-        try {
-          const doc = iframe.contentDocument;
-          const docEl = doc.documentElement;
-          const body = doc.body;
-
-          // Use a combination of scroll and offset to find the best fit
-          const width = Math.max(
-            docEl.scrollWidth,
-            docEl.offsetWidth,
-            body ? body.scrollWidth : 0,
-            body ? body.offsetWidth : 0
-          );
-          const height = Math.max(
-            docEl.scrollHeight,
-            docEl.offsetHeight,
-            body ? body.scrollHeight : 0,
-            body ? body.offsetHeight : 0
-          );
-
-          iframe.style.width = width + 'px';
-          iframe.style.height = height + 'px';
-        } catch (err) {
-          console.error("Error accessing iframe content:", err);
-        }
-      }, 100);
-    }
-
-    /**********************************
-     * ZIP Processing Functionality
-     **********************************/
-    async function processZipFiles(files) {
-      for (const file of files) {
-        if (!file.name.toLowerCase().endsWith('.zip')) {
-          alert(`"${file.name}" is not a ZIP file. Skipping.`);
-          continue;
-        }
-        try {
-          const zip = new JSZip();
-          const zipContent = await zip.loadAsync(file);
-
-          // Build a mapping of normalized file paths to blob URLs.
-          const fileMap = {};
-          const nonCssPromises = [];
-          const cssFiles = [];
-
-          for (const [filename, fileData] of Object.entries(zipContent.files)) {
-            if (!fileData.dir) {
-              const normName = normalizePath(filename);
-              if (normName.toLowerCase().endsWith('.css')) {
-                cssFiles.push({ filename: normName, fileData });
-              } else {
-                nonCssPromises.push(
-                  fileData.async("blob").then(blob => {
-                    fileMap[normName] = URL.createObjectURL(blob);
-                  })
-                );
-              }
-            }
-          }
-          await Promise.all(nonCssPromises);
-
-          // Process CSS files: replace any url(...) references with blob URLs.
-          const cssPromises = cssFiles.map(item => {
-            const { filename, fileData } = item;
-            return fileData.async("text").then(cssContent => {
-              const lastSlashIndex = filename.lastIndexOf('/');
-              const cssBasePath = lastSlashIndex !== -1 ? filename.substring(0, lastSlashIndex + 1) : '';
-              cssContent = cssContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
-                if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
-                  return match;
-                }
-                const blobURL = resolveResource(cssBasePath, resourcePath, fileMap);
-                return blobURL ? `url("${blobURL}")` : match;
-              });
-              const blob = new Blob([cssContent], { type: "text/css" });
-              fileMap[filename] = URL.createObjectURL(blob);
-            });
-          });
-          await Promise.all(cssPromises);
-
-          // Locate the index.html file (case-insensitive).
-          const indexFile = Object.keys(fileMap).find(name => name.toLowerCase().endsWith('index.html'));
-          if (!indexFile) {
-            alert(`No index.html found in ZIP "${file.name}".`);
-            continue;
-          }
-
-          // Read index.html as text so we can rewrite its resource URLs.
-          let indexContent = await zipContent.file(indexFile).async("text");
-          const lastSlashIndex = indexFile.lastIndexOf('/');
-          const htmlBasePath = lastSlashIndex !== -1 ? indexFile.substring(0, lastSlashIndex + 1) : '';
-
-          // Replace src and href attributes with the proper blob URLs.
-          indexContent = indexContent.replace(/(src|href)=["']([^"']+)["']/gi, (match, attr, resourcePath) => {
-            if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
-              return match;
-            }
-            const blobURL = resolveResource(htmlBasePath, resourcePath, fileMap);
-            return blobURL ? `${attr}="${blobURL}"` : match;
-          });
-
-          // Also replace any inline CSS url() references.
-          indexContent = indexContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, resourcePath) => {
-            if (/^(https?:|data:|\/\/)/i.test(resourcePath)) {
-              return match;
-            }
-            const blobURL = resolveResource(htmlBasePath, resourcePath, fileMap);
-            return blobURL ? `url("${blobURL}")` : match;
-          });
-
-          // Create a blob URL for the modified index.html.
-          const modifiedBlob = new Blob([indexContent], { type: "text/html" });
-          const modifiedUrl = URL.createObjectURL(modifiedBlob);
-
-          // Create an iframe to display the ad.
-          const iframe = document.createElement('iframe');
-          iframe.src = modifiedUrl;
-          iframe.title = file.name;
-          iframe.onload = () => autoResizeIframe(iframe);
-          document.getElementById('ads-container').appendChild(iframe);
-        } catch (err) {
-          console.error(`Error processing "${file.name}":`, err);
-          alert(`Error processing "${file.name}". See console for details.`);
-        }
-      }
-    }
-
-    /**********************************
-     * Media File Processing Functionality
-     **********************************/
-    function processMediaFiles(files) {
-      files.forEach(file => {
-        const url = URL.createObjectURL(file);
-        const lowerName = file.name.toLowerCase();
-        let element;
-
-        if (lowerName.endsWith('.gif')) {
-          element = document.createElement('img');
-          element.src = url;
-          element.alt = file.name;
-        } else if (lowerName.endsWith('.mp4') || lowerName.endsWith('.webm')) {
-          element = document.createElement('video');
-          element.src = url;
-          element.controls = true;
-        } else {
-          alert(`Unsupported file type: ${file.name}`);
-          return;
-        }
-
-        // Let the new CSS handle sizing. Just append it.
-        document.getElementById('ads-container').appendChild(element);
-      });
-    }
-
-    /**********************************
-     * Unified File Processing Functionality
-     **********************************/
-    async function processFiles(files) {
-      loadedFiles.push(...files);
-      const zipFiles = files.filter(file => file.name.toLowerCase().endsWith('.zip'));
-      const mediaFiles = files.filter(file => {
-        const lowerName = file.name.toLowerCase();
-        return lowerName.endsWith('.gif') || lowerName.endsWith('.mp4') || lowerName.endsWith('.webm');
-      });
-
-      if (zipFiles.length > 0) {
-        await processZipFiles(zipFiles);
-      }
-      if (mediaFiles.length > 0) {
-        processMediaFiles(mediaFiles);
-      }
-    }
-
-    /**********************************
-     * Drag & Drop and File Browser Handling
-     **********************************/
+    /********************************************
+     * 1) Basic Variables & Setup
+     ********************************************/
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
+    const uploadBtn = document.getElementById('upload-btn');
+    const shareBtn = document.getElementById('share-btn');
+    const shareLinkField = document.getElementById('share-link');
+    const adsContainer = document.getElementById('ads-container');
 
-    // Open the file browser when clicking the drop zone.
-    dropZone.addEventListener('click', () => {
-      fileInput.click();
-    });
+    let selectedFiles = [];   // local File objects
+    let uploadedFiles = [];   // { name, url } after file.io
 
-    // Handle drag & drop events on the drop zone.
+    /********************************************
+     * 2) Drag & Drop / File Selection
+     ********************************************/
+    dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => {
       e.preventDefault();
       dropZone.style.borderColor = '#28a745';
@@ -292,19 +104,179 @@
     dropZone.addEventListener('dragleave', () => {
       dropZone.style.borderColor = '#007bff';
     });
-    dropZone.addEventListener('drop', async (e) => {
+    dropZone.addEventListener('drop', (e) => {
       e.preventDefault();
       dropZone.style.borderColor = '#007bff';
       const files = Array.from(e.dataTransfer.files);
-      await processFiles(files);
+      handleNewFiles(files);
+    });
+    fileInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      handleNewFiles(files);
+      fileInput.value = "";
     });
 
-    // Handle file selection from the file browser.
-    fileInput.addEventListener('change', async (e) => {
-      const files = Array.from(e.target.files);
-      await processFiles(files);
-      fileInput.value = ""; // Clear the selection for future uploads.
+    function handleNewFiles(files) {
+      selectedFiles.push(...files);
+      displayLocalFiles(files);
+    }
+
+    /********************************************
+     * 3) Display Files (Local Preview)
+     ********************************************/
+    function displayLocalFiles(files) {
+      for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.zip')) {
+          // If you want to parse ZIP with JSZip, do that here or after upload.
+          const div = document.createElement('div');
+          div.textContent = `ZIP file: ${file.name}`;
+          adsContainer.appendChild(div);
+        }
+        else if (/\.(gif|jpg|jpeg|png|webp|svg)$/i.test(file.name)) {
+          const img = document.createElement('img');
+          img.src = URL.createObjectURL(file);
+          img.alt = file.name;
+          adsContainer.appendChild(img);
+        }
+        else if (/\.(mp4|webm)$/i.test(file.name)) {
+          const vid = document.createElement('video');
+          vid.src = URL.createObjectURL(file);
+          vid.controls = true;
+          adsContainer.appendChild(vid);
+        }
+        else {
+          const div = document.createElement('div');
+          div.textContent = `Unsupported local preview: ${file.name}`;
+          adsContainer.appendChild(div);
+        }
+      }
+    }
+
+    /********************************************
+     * 4) Upload to file.io
+     ********************************************/
+    uploadBtn.addEventListener('click', async () => {
+      if (selectedFiles.length === 0) {
+        alert("No files selected.");
+        return;
+      }
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = "Uploading...";
+
+      for (const file of selectedFiles) {
+        try {
+          const link = await uploadFileToFileIo(file);
+          uploadedFiles.push({ name: file.name, url: link });
+        } catch (err) {
+          console.error("Upload error:", err);
+          alert(`Failed to upload ${file.name}: ${err.message}`);
+        }
+      }
+
+      uploadBtn.textContent = "Upload to file.io";
+      uploadBtn.disabled = false;
+      // Enable share link if we have at least one success
+      if (uploadedFiles.length > 0) {
+        shareBtn.disabled = false;
+      }
     });
+
+    // Actually POST to file.io
+    async function uploadFileToFileIo(file) {
+      // We'll set 14 days expiry and allow up to 10 downloads
+      const url = 'https://file.io?expires=14d&maxDownloads=10';
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+      });
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+      }
+      const json = await response.json();
+      if (!json.success) {
+        throw new Error(`Upload error: ${JSON.stringify(json)}`);
+      }
+      // "json.link" is the file's download URL
+      return json.link;
+    }
+
+    /********************************************
+     * 5) Generate a Share Link (hash-based)
+     ********************************************/
+    shareBtn.addEventListener('click', () => {
+      if (uploadedFiles.length === 0) {
+        alert("No uploaded files to share.");
+        return;
+      }
+      const encoded = btoa(JSON.stringify(uploadedFiles));
+      const shareURL = `${location.origin}${location.pathname}#${encoded}`;
+      shareLinkField.value = shareURL;
+      shareLinkField.select();
+      document.execCommand('copy'); // older browsers
+      alert("Share link copied to clipboard!");
+    });
+
+    /********************************************
+     * 6) On Page Load, Check Hash -> Re-fetch
+     ********************************************/
+    window.addEventListener('load', async () => {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (!hash) return;
+      try {
+        const arr = JSON.parse(atob(hash)); // array of { name, url }
+        if (!Array.isArray(arr)) return;
+
+        uploadedFiles = arr;
+        shareBtn.disabled = false; // we have something to share
+
+        // Re-fetch each file from file.io and display
+        for (const item of arr) {
+          try {
+            await fetchAndDisplay(item.url, item.name);
+          } catch (err) {
+            console.error("Failed to fetch file:", err);
+          }
+        }
+      } catch (err) {
+        console.error("Invalid hash data:", err);
+      }
+    });
+
+    // Download from file.io, convert to Blob/File, display in adsContainer
+    async function fetchAndDisplay(url, name) {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} - ${resp.statusText}`);
+      const blob = await resp.blob();
+
+      if (name.toLowerCase().endsWith('.zip')) {
+        const div = document.createElement('div');
+        div.textContent = `ZIP file from link: ${name}`;
+        adsContainer.appendChild(div);
+        // If you want to parse with JSZip:
+        // const zipFile = new File([blob], name);
+        // processZipFiles([zipFile]);
+      }
+      else if (/\.(gif|jpg|jpeg|png|webp|svg)$/i.test(name)) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(blob);
+        img.alt = name;
+        adsContainer.appendChild(img);
+      }
+      else if (/\.(mp4|webm)$/i.test(name)) {
+        const vid = document.createElement('video');
+        vid.src = URL.createObjectURL(blob);
+        vid.controls = true;
+        adsContainer.appendChild(vid);
+      }
+      else {
+        const div = document.createElement('div');
+        div.textContent = `File from link: ${name} (unsupported preview)`;
+        adsContainer.appendChild(div);
+      }
+    }
   </script>
 </body>
 </html>
