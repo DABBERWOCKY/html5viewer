@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HTML5 Ad Viewer</title>
+  <title>HTML5 Ad & Media Viewer</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -23,7 +23,7 @@
       gap: 20px;
       justify-content: center;
     }
-    iframe {
+    iframe, img, video {
       border: none; /* Remove any borders */
       display: block;
     }
@@ -34,11 +34,11 @@
   </style>
 </head>
 <body>
-  <h1>HTML5 Ad Viewer</h1>
-  <div id="drop-zone">Drop your ZIP files here (or click to browse)</div>
+  <h1>HTML5 Ad & Media Viewer</h1>
+  <div id="drop-zone">Drop your ZIP, GIF, or video files here (or click to browse)</div>
   <div id="ads-container"></div>
   <!-- Hidden file input for file browsing -->
-  <input id="file-input" type="file" accept=".zip" multiple />
+  <input id="file-input" type="file" accept=".zip, .gif, .mp4, .webm" multiple />
 
   <!-- Include JSZip from CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -56,8 +56,8 @@
     /**********************************
      * Global Variables and Helper Functions
      **********************************/
-    // Array to store loaded ZIP File objects (for further processing if needed)
-    let loadedZipFiles = [];
+    // Array to store loaded files (ZIP or media) if needed
+    let loadedFiles = [];
 
     // Normalize paths (convert backslashes to forward slashes)
     function normalizePath(path) {
@@ -65,7 +65,6 @@
     }
 
     // Combine a base path and a relative path.
-    // For example, combinePath("ad/", "images/photo.jpg") returns "ad/images/photo.jpg".
     function combinePath(basePath, relativePath) {
       relativePath = relativePath.replace(/^\/+/, '');
       return normalizePath(basePath + relativePath);
@@ -73,10 +72,6 @@
 
     /**
      * Resolve a resource URL from a base path and a file map.
-     * @param {string} basePath - The folder of the parent file.
-     * @param {string} resourcePath - The resource path.
-     * @param {Object} fileMap - Mapping of file paths to blob URLs.
-     * @returns {string|null} A blob URL if found, or null.
      */
     function resolveResource(basePath, resourcePath, fileMap) {
       let candidate = null;
@@ -100,13 +95,12 @@
      **********************************/
     async function processZipFiles(files) {
       for (const file of files) {
-        if (!file.name.endsWith('.zip')) {
+        if (!file.name.toLowerCase().endsWith('.zip')) {
           alert(`"${file.name}" is not a ZIP file. Skipping.`);
           continue;
         }
         try {
           const zip = new JSZip();
-          // For dropped or browsed files, file is already a Blob
           const zipContent = await zip.loadAsync(file);
 
           // Build a mapping of normalized file paths to blob URLs.
@@ -207,6 +201,53 @@
     }
 
     /**********************************
+     * Media File Processing Functionality
+     **********************************/
+    function processMediaFiles(files) {
+      files.forEach(file => {
+        const url = URL.createObjectURL(file);
+        let element;
+        const lowerName = file.name.toLowerCase();
+        if (lowerName.endsWith('.gif')) {
+          element = document.createElement('img');
+          element.src = url;
+          element.alt = file.name;
+        } else if (lowerName.endsWith('.mp4') || lowerName.endsWith('.webm')) {
+          element = document.createElement('video');
+          element.src = url;
+          element.controls = true;
+          element.style.maxWidth = '100%';
+        } else {
+          alert(`Unsupported file type: ${file.name}`);
+          return;
+        }
+        element.style.display = 'block';
+        element.style.margin = '10px auto';
+        document.getElementById('ads-container').appendChild(element);
+      });
+    }
+
+    /**********************************
+     * Unified File Processing Functionality
+     **********************************/
+    async function processFiles(files) {
+      // Store all loaded files if needed
+      loadedFiles.push(...files);
+      const zipFiles = files.filter(file => file.name.toLowerCase().endsWith('.zip'));
+      const mediaFiles = files.filter(file => {
+        const lowerName = file.name.toLowerCase();
+        return lowerName.endsWith('.gif') || lowerName.endsWith('.mp4') || lowerName.endsWith('.webm');
+      });
+
+      if (zipFiles.length > 0) {
+        await processZipFiles(zipFiles);
+      }
+      if (mediaFiles.length > 0) {
+        processMediaFiles(mediaFiles);
+      }
+    }
+
+    /**********************************
      * Drag & Drop and File Browser Handling
      **********************************/
     const dropZone = document.getElementById('drop-zone');
@@ -229,17 +270,13 @@
       e.preventDefault();
       dropZone.style.borderColor = '#007bff';
       const files = Array.from(e.dataTransfer.files);
-      const zipFiles = files.filter(file => file.name.endsWith('.zip'));
-      loadedZipFiles.push(...zipFiles);
-      await processZipFiles(zipFiles);
+      await processFiles(files);
     });
 
     // Handle file selection from the file browser.
     fileInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files);
-      const zipFiles = files.filter(file => file.name.endsWith('.zip'));
-      loadedZipFiles.push(...zipFiles);
-      await processZipFiles(zipFiles);
+      await processFiles(files);
       fileInput.value = ""; // Clear the selection for future uploads.
     });
   </script>
