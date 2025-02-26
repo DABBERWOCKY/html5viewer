@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Ad & Media Viewer (file.io)</title>
+  <title>Ad & Media Viewer with CORS Proxy + file.io</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -59,7 +59,7 @@
   </style>
 </head>
 <body>
-  <h1 style="text-align:center;">Ad & Media Viewer (file.io)</h1>
+  <h1 style="text-align:center;">Ad & Media Viewer (CORS Proxy + file.io)</h1>
   <div id="drop-zone">Drop your files here (ZIP, images, videos) or click to browse</div>
   <div style="text-align:center;">
     <button id="upload-btn" class="btn">Upload to file.io</button>
@@ -77,12 +77,16 @@
     multiple
   />
 
-  <!-- (Optional) JSZip if you want to parse ZIP banners -->
+  <!-- JSZip if you want to parse ZIP banners -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
     /********************************************
      * 1) Basic Variables & Setup
      ********************************************/
+
+    // CHANGE THIS to your actual deployed CORS proxy URL:
+    const CORS_PROXY = "https://my-cors-proxy.onrender.com/";
+
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
     const uploadBtn = document.getElementById('upload-btn');
@@ -153,7 +157,7 @@
     }
 
     /********************************************
-     * 4) Upload to file.io
+     * 4) Upload to file.io (through CORS proxy)
      ********************************************/
     uploadBtn.addEventListener('click', async () => {
       if (selectedFiles.length === 0) {
@@ -181,10 +185,13 @@
       }
     });
 
-    // Actually POST to file.io
+    // Actually POST to file.io, but we prefix with the CORS proxy
     async function uploadFileToFileIo(file) {
-      // We'll set 14 days expiry and allow up to 10 downloads
-      const url = 'https://file.io?expires=14d&maxDownloads=10';
+      // file.io request URL, with 14-day expiry, up to 10 downloads
+      const targetUrl = "https://file.io?expires=14d&maxDownloads=10";
+      // Prepend the proxy:
+      const url = CORS_PROXY + targetUrl;
+
       const formData = new FormData();
       formData.append('file', file);
 
@@ -245,9 +252,13 @@
       }
     });
 
-    // Download from file.io, convert to Blob/File, display in adsContainer
+    // Download from file.io (no proxy needed for downloads, but you can use it if file.io blocks GET)
     async function fetchAndDisplay(url, name) {
-      const resp = await fetch(url);
+      // If file.io also blocks GET from other origins, do:
+      // const proxiedUrl = CORS_PROXY + url;
+      // const resp = await fetch(proxiedUrl);
+
+      const resp = await fetch(url); // try direct first
       if (!resp.ok) throw new Error(`HTTP ${resp.status} - ${resp.statusText}`);
       const blob = await resp.blob();
 
